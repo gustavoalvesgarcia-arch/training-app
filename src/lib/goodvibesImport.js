@@ -70,14 +70,37 @@ export function parseGoodvibesCsv(text) {
   return entries;
 }
 
-// Adds only readings that don't already exist (same date + weight — the most
-// stable fields to key on, since re-exporting an overlapping date range and
-// re-importing shouldn't pile up duplicate rows). Existing manually-logged or
-// previously-imported entries are left untouched, never overwritten.
+const MERGE_FIELDS = ["weight", "bmi", "bf", "subq", "visceral", "water", "muscle", "bone", "bmr"];
+
+// Merges by date rather than add-or-skip: a new date becomes a new row, but a
+// date that already has a record gets that record's fields filled in/updated
+// with whatever the CSV supplies (only fields present in the CSV are touched —
+// e.g. "lean", which Goodvibes doesn't report, is left alone either way). If a
+// date has more than one existing row (allowed by manual entry), only the last
+// one is updated, so older same-day rows aren't silently collapsed together.
 export function mergeGoodvibesEntries(existingBodyLogs, imported) {
-  const existingKeys = new Set(existingBodyLogs.map(e => `${e.date}|${e.weight}`));
-  const additions = imported
-    .filter(e => !existingKeys.has(`${e.date}|${e.weight}`))
-    .map(e => ({ id: Date.now() + Math.random(), ...e }));
-  return { bodyLogs: [...existingBodyLogs, ...additions], addedCount: additions.length, skippedCount: imported.length - additions.length };
+  const lastIndexByDate = new Map();
+  existingBodyLogs.forEach((e, i) => lastIndexByDate.set(e.date, i));
+
+  const bodyLogs = [...existingBodyLogs];
+  let addedCount = 0, updatedCount = 0;
+
+  for (const entry of imported) {
+    const idx = lastIndexByDate.get(entry.date);
+    if (idx === undefined) {
+      bodyLogs.push({ id: Date.now() + Math.random(), ...entry });
+      lastIndexByDate.set(entry.date, bodyLogs.length - 1);
+      addedCount++;
+      continue;
+    }
+    const existing = bodyLogs[idx];
+    let changed = false;
+    const merged = { ...existing };
+    for (const key of MERGE_FIELDS) {
+      if (entry[key] != null && entry[key] !== existing[key]) { merged[key] = entry[key]; changed = true; }
+    }
+    if (changed) { bodyLogs[idx] = merged; updatedCount++; }
+  }
+
+  return { bodyLogs, addedCount, updatedCount };
 }

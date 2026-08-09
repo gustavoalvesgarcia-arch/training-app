@@ -1012,13 +1012,18 @@ export default function PlanView() {
       if (isGoodvibesCsv(text)) {
         const imported = parseGoodvibesCsv(text);
         if (!imported.length) { alert("Couldn't find any readings in this Goodvibes CSV."); return; }
-        setLogs(l => {
-          const { bodyLogs, addedCount, skippedCount } = mergeGoodvibesEntries(l.bodyLogs, imported);
-          const updated = { ...l, bodyLogs };
+        // Merge onto the latest server data, not whatever's in this tab's memory —
+        // see the equivalent fix in RecoveryView's Health Auto Export import.
+        loadTrainingLogs().then(latest => {
+          const { bodyLogs, addedCount, updatedCount } = mergeGoodvibesEntries(latest.bodyLogs, imported);
+          const updated = { ...latest, bodyLogs };
+          setLogs(updated);
           persist(updated);
-          alert(`Imported ${addedCount} reading(s) from Goodvibes${skippedCount ? ` (${skippedCount} already logged, skipped)` : ""}.`);
-          return updated;
-        });
+          const parts = [];
+          if (addedCount) parts.push(`${addedCount} new reading(s)`);
+          if (updatedCount) parts.push(`${updatedCount} existing entry(ies) updated`);
+          alert(parts.length ? `Imported from Goodvibes: ${parts.join(", ")}.` : "Nothing new to import — already up to date.");
+        }).catch(() => alert("Couldn't reach the server to import — check your connection and try again."));
         return;
       }
 
