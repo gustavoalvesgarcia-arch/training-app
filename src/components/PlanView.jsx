@@ -698,7 +698,7 @@ function calcZones(maxHR) {
 }
 
 function BodyLog({ logs, onLog, onDelete }) {
-  const [form, setForm] = useState({ date: new Date().toISOString().slice(0, 10), weight: "", bf: "", lean: "", muscle: "", visceral: "", bmr: "", water: "" });
+  const [form, setForm] = useState({ date: new Date().toISOString().slice(0, 10), weight: "", bf: "", lean: "", muscle: "", visceral: "", bmr: "", water: "", bmi: "", subq: "", bone: "" });
   const [adding, setAdding] = useState(false);
 
   // Sort ascending for trend calc, descending for display
@@ -749,8 +749,11 @@ function BodyLog({ logs, onLog, onDelete }) {
       visceral: form.visceral ? Number(form.visceral) : null,
       bmr: form.bmr ? Number(form.bmr) : null,
       water: form.water ? Number(form.water) : null,
+      bmi: form.bmi ? Number(form.bmi) : null,
+      subq: form.subq ? Number(form.subq) : null,
+      bone: form.bone ? Number(form.bone) : null,
     });
-    setForm({ date: new Date().toISOString().slice(0, 10), weight: "", bf: "", lean: "", muscle: "", visceral: "", bmr: "", water: "" });
+    setForm({ date: new Date().toISOString().slice(0, 10), weight: "", bf: "", lean: "", muscle: "", visceral: "", bmr: "", water: "", bmi: "", subq: "", bone: "" });
     setAdding(false);
   }
 
@@ -774,6 +777,11 @@ function BodyLog({ logs, onLog, onDelete }) {
             <InputField label="BMR" value={form.bmr} onChange={v => setForm(f => ({ ...f, bmr: v }))} unit="kcal" placeholder="1794" />
             <InputField label="Body water" value={form.water} onChange={v => setForm(f => ({ ...f, water: v }))} unit="%" placeholder="60.1" />
             <InputField label="Lean mass" value={form.lean} onChange={v => setForm(f => ({ ...f, lean: v }))} unit="kg" placeholder="65.9" />
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 10, marginBottom: 12 }}>
+            <InputField label="BMI" value={form.bmi} onChange={v => setForm(f => ({ ...f, bmi: v }))} placeholder="27.2" />
+            <InputField label="Subcutaneous fat" value={form.subq} onChange={v => setForm(f => ({ ...f, subq: v }))} unit="%" placeholder="24.1" />
+            <InputField label="Bone mass" value={form.bone} onChange={v => setForm(f => ({ ...f, bone: v }))} unit="kg" placeholder="2.89" />
           </div>
           <Btn onClick={submit} variant="success" small>Save</Btn>
         </div>
@@ -811,6 +819,7 @@ function BodyLog({ logs, onLog, onDelete }) {
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 16 }}>
             {[
               { l: "Weight",    v: latest?.weight?.toFixed(1), u: "kg", slope: weightSlope,  good: "down" },
+              { l: "BMI",       v: latest?.bmi,                 u: "",   slope: null,         good: null   },
               { l: "Body Fat",  v: latest?.bf?.toFixed(1),     u: "%",  slope: bfSlope,      good: "down" },
               { l: "Muscle",    v: latest?.muscle?.toFixed(1) || latest?.lean?.toFixed(1), u: "kg", slope: leanSlope, good: "up" },
               { l: "Visceral",  v: latest?.visceral,            u: "",   slope: null,         good: null   },
@@ -832,7 +841,7 @@ function BodyLog({ logs, onLog, onDelete }) {
             <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
               <thead>
                 <tr style={{ borderBottom: "1px solid #252b25" }}>
-                  {["Date", "Weight", "BF%", "Muscle", "Fat kg", "Visceral", "BMR", "Water%", "Δ kg"].map(h => (
+                  {["Date", "Weight", "BMI", "BF%", "SubQ%", "Muscle", "Bone", "Fat kg", "Visceral", "BMR", "Water%", "Δ kg"].map(h => (
                     <th key={h} style={{ padding: "10px 10px", textAlign: "left", fontSize: 9, color: "#8A8578", fontFamily: "'IBM Plex Mono',monospace", textTransform: "uppercase", letterSpacing: 1, whiteSpace: "nowrap" }}>{h}</th>
                   ))}
                   <th />
@@ -851,8 +860,11 @@ function BodyLog({ logs, onLog, onDelete }) {
                         {isShiftBoundary && <span style={{ marginLeft: 4, fontSize: 8, background: "#92400e", color: "#fdba74", borderRadius: 4, padding: "1px 4px" }} title="Scale's BF%/muscle calculation shifted around here">calc shift ↑</span>}
                       </td>
                       <td style={{ padding: "8px 10px", fontWeight: 700, color: "#EDEAE2" }}>{r.weight}</td>
+                      <td style={{ padding: "8px 10px", color: "#A8A398" }}>{r.bmi ?? "–"}</td>
                       <td style={{ padding: "8px 10px", color: RED }}>{r.bf ? `${r.bf}%` : "–"}</td>
+                      <td style={{ padding: "8px 10px", color: AMBER }}>{r.subq ? `${r.subq}%` : "–"}</td>
                       <td style={{ padding: "8px 10px", color: "#34d399" }}>{r.muscle ? `${r.muscle}` : r.lean ? `${r.lean}` : "–"}</td>
+                      <td style={{ padding: "8px 10px", color: "#A8A398" }}>{r.bone ?? "–"}</td>
                       <td style={{ padding: "8px 10px", color: "#A8A398" }}>{fatMass}</td>
                       <td style={{ padding: "8px 10px", color: r.visceral >= 10 ? RED : "#A8A398" }}>{r.visceral ?? "–"}</td>
                       <td style={{ padding: "8px 10px", color: "#A8A398" }}>{r.bmr ?? "–"}</td>
