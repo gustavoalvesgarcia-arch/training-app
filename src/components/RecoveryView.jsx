@@ -67,6 +67,189 @@ function Sparkline({ vals, color }) {
   );
 }
 
+// ── Health Auto Export import ────────────────────────────────────────────
+// Parses the JSON produced by the "Health Auto Export" iOS app
+// (https://github.com/Lybron/health-auto-export), which nests metrics and
+// workouts under `data` rather than matching this app's { entries, workouts }
+// backup shape directly.
+const avgNum = vals => vals.reduce((a, b) => a + b, 0) / vals.length;
+const dateKey = str => (typeof str === "string" ? str.slice(0, 10) : null);
+const round1 = v => (typeof v === "number" ? Math.round(v * 10) / 10 : null);
+
+function groupByDate(points, field) {
+  const byDate = {};
+  for (const p of points) {
+    const date = dateKey(p.date);
+    const v = p[field];
+    if (!date || typeof v !== "number") continue;
+    (byDate[date] ??= []).push(v);
+  }
+  return Object.entries(byDate).map(([date, vals]) => ({ date, vals }));
+}
+
+function mapWorkoutType(name = "") {
+  if (/run/i.test(name)) return "Run";
+  if (/walk/i.test(name)) return "Walk";
+  if (/padel|pickleball/i.test(name)) return "Padel"; // closest category to racket sports this app tracks
+  if (/swim|pool/i.test(name)) return "Swim";
+  if (/cycl|bike/i.test(name)) return "Cycle";
+  return "Gym";
+}
+
+function toKm(qty, units = "") {
+  if (typeof qty !== "number") return null;
+  const u = units.toLowerCase();
+  if (u.includes("mi")) return Math.round(qty * 1.60934 * 100) / 100;
+  if (u === "m" || u.includes("meter")) return Math.round((qty / 1000) * 100) / 100;
+  return Math.round(qty * 100) / 100;
+}
+
+function isHealthAutoExport(parsed) {
+  return !!(parsed && parsed.data && (parsed.data.metrics || parsed.data.workouts));
+}
+
+function parseHealthAutoExport(raw) {
+  const metrics = raw.data.metrics || [];
+  const byDate = {};
+  const ensure = date => (byDate[date] ??= { date });
+
+  for (const m of metrics) {
+    // Metric names vary by export version/settings — "Resting Heart Rate" (Title Case)
+    // vs "resting_heart_rate" (snake_case); normalize both to space-separated lowercase.
+    const name = (m.name || "").toLowerCase().replace(/_/g, " ");
+    const points = m.data || [];
+    if (!points.length) continue;
+    // Sleep fields are reported in whatever unit the metric declares — "hr" in practice,
+    // but fall back to treating them as minutes if a future export ever says "min".
+    const sleepInMinutes = (m.units || "").toLowerCase().startsWith("min");
+
+    if (name.includes("resting heart rate")) {
+      groupByDate(points, "qty").forEach(({ date, vals }) => { ensure(date).rhr = Math.round(avgNum(vals)); });
+    } else if (name.includes("heart rate variability")) {
+      groupByDate(points, "qty").forEach(({ date, vals }) => { ensure(date).hrv = round1(avgNum(vals)); });
+    } else if (name.includes("blood oxygen")) {
+      groupByDate(points, "qty").forEach(({ date, vals }) => {
+        const v = avgNum(vals);
+        ensure(date).spo2 = round1(v <= 1 ? v * 100 : v); // HealthKit sometimes stores SpO2 as a 0–1 fraction
+      });
+    } else if (name.includes("vo2")) {
+      groupByDate(points, "qty").forEach(({ date, vals }) => { ensure(date).vo2max = round1(avgNum(vals)); });
+    } else if (name.includes("sleep analysis")) {
+      for (const p of points) {
+        const date = dateKey(p.date);
+        if (!date) continue;
+        const e = ensure(date);
+        const toHours = v => (typeof v !== "number" ? null : round1(sleepInMinutes ? v / 60 : v));
+        // totalSleep is the reliable total; `asleep` is sometimes 0 even on full nights, so only use it as a fallback
+        const total = typeof p.totalSleep === "number" && p.totalSleep > 0 ? p.totalSleep : p.asleep;
+        if (typeof total === "number") e.sleep = toHours(total);
+        if (typeof p.deep === "number") e.deep = toHours(p.deep);
+        if (typeof p.rem === "number") e.rem = toHours(p.rem);
+      }
+    }
+  }
+
+  const workouts = (raw.data.workouts || []).map(w => {
+    const date = dateKey(w.start || w.date);
+    if (!date) return null;
+    let avgHR = w.heartRate?.avg?.qty ?? null;
+    let maxHR = w.heartRate?.max?.qty ?? null;
+    if ((avgHR == null || maxHR == null) && Array.isArray(w.heartRateData) && w.heartRateData.length) {
+      const avgs = w.heartRateData.map(p => p.Avg).filter(v => typeof v === "number");
+      const maxs = w.heartRateData.map(p => p.Max).filter(v => typeof v === "number");
+      if (avgHR == null && avgs.length) avgHR = avgNum(avgs);
+      if (maxHR == null && maxs.length) maxHR = Math.max(...maxs);
+    }
+    return {
+      date,
+      type: mapWorkoutType(w.name),
+      dur: typeof w.duration === "number" ? Math.round(w.duration / 60) : null, // HealthKit duration is in seconds
+      distance: toKm(w.distance?.qty, w.distance?.units),
+      avgHR: avgHR != null ? Math.round(avgHR) : null,
+      maxHR: maxHR != null ? Math.round(maxHR) : null,
+    };
+  }).filter(Boolean);
+
+  return { entries: Object.values(byDate), workouts };
+}
+
+// Merges partial records (from a health-export import) into existing entries/workouts,
+// filling or overwriting only the fields the import actually supplies — manual notes and
+// zone/strain data logged by hand are left untouched.
+function mergePatches(existingList, patches, keyFn) {
+  const map = new Map(existingList.map(item => [keyFn(item), item]));
+  for (const patch of patches) {
+    const key = keyFn(patch);
+    const merged = { ...(map.get(key) || {}) };
+    for (const k of Object.keys(patch)) {
+      if (patch[k] != null) merged[k] = patch[k];
+    }
+    map.set(key, merged);
+  }
+  return [...map.values()];
+}
+
+function mergeImported(existingData, imported) {
+  return {
+    ...existingData,
+    entries: mergePatches(existingData.entries, imported.entries, e => e.date),
+    workouts: mergePatches(existingData.workouts, imported.workouts, w => `${w.date}|${w.type}`),
+  };
+}
+
+// ── Minimal zip reader ───────────────────────────────────────────────────
+// Health Auto Export shares a .zip (JSON + GPX route files bundled together).
+// Rather than pull in a zip library, walk the standard zip central directory
+// to find the .json entry and decompress just that one, in-browser.
+function readZipJsonEntry(bytes, view) {
+  const EOCD_SIG = 0x06054b50, CENTRAL_SIG = 0x02014b50;
+  let eocdOffset = -1;
+  const scanFrom = Math.max(0, bytes.length - (65535 + 22));
+  for (let i = bytes.length - 22; i >= scanFrom; i--) {
+    if (view.getUint32(i, true) === EOCD_SIG) { eocdOffset = i; break; }
+  }
+  if (eocdOffset === -1) throw new Error("Not a valid zip file");
+
+  const entryCount = view.getUint16(eocdOffset + 10, true);
+  let cdOffset = view.getUint32(eocdOffset + 16, true);
+
+  let best = null;
+  for (let i = 0; i < entryCount; i++) {
+    if (view.getUint32(cdOffset, true) !== CENTRAL_SIG) break;
+    const compressionMethod = view.getUint16(cdOffset + 10, true);
+    const compressedSize = view.getUint32(cdOffset + 20, true);
+    const uncompressedSize = view.getUint32(cdOffset + 24, true);
+    const nameLen = view.getUint16(cdOffset + 28, true);
+    const extraLen = view.getUint16(cdOffset + 30, true);
+    const commentLen = view.getUint16(cdOffset + 32, true);
+    const localHeaderOffset = view.getUint32(cdOffset + 42, true);
+    const name = new TextDecoder().decode(bytes.subarray(cdOffset + 46, cdOffset + 46 + nameLen));
+    if (/\.json$/i.test(name) && !name.includes("__MACOSX") && (!best || uncompressedSize > best.uncompressedSize)) {
+      best = { name, compressionMethod, compressedSize, localHeaderOffset };
+    }
+    cdOffset += 46 + nameLen + extraLen + commentLen;
+  }
+  if (!best) throw new Error("No .json file found inside the zip — check Health Auto Export is set to export JSON, not CSV.");
+
+  const LOCAL_SIG = 0x04034b50;
+  const lh = best.localHeaderOffset;
+  if (view.getUint32(lh, true) !== LOCAL_SIG) throw new Error("Corrupt zip entry");
+  const dataStart = lh + 30 + view.getUint16(lh + 26, true) + view.getUint16(lh + 28, true);
+  return { bytes: bytes.subarray(dataStart, dataStart + best.compressedSize), compressionMethod: best.compressionMethod };
+}
+
+async function extractJsonFromZip(arrayBuffer) {
+  const bytes = new Uint8Array(arrayBuffer);
+  const view = new DataView(arrayBuffer);
+  const { bytes: entryBytes, compressionMethod } = readZipJsonEntry(bytes, view);
+  if (compressionMethod === 0) return new TextDecoder().decode(entryBytes);
+  if (compressionMethod === 8) {
+    const stream = new Blob([entryBytes]).stream().pipeThrough(new DecompressionStream("deflate-raw"));
+    return await new Response(stream).text();
+  }
+  throw new Error(`Unsupported zip compression (method ${compressionMethod}) — unzip and select the .json file directly instead.`);
+}
+
 // ── Input components ─────────────────────────────────────────────────────
 function InputField({ label, value, onChange, type = "number", placeholder, unit }) {
   return (
@@ -196,17 +379,49 @@ export default function RecoveryView() {
     a.click();
   }
 
+  function applyImportedJSON(text) {
+    let parsed;
+    try { parsed = JSON.parse(text); } catch { alert("Invalid JSON file"); return; }
+
+    if (parsed.entries && parsed.workouts) {
+      setData(parsed);
+      persist(parsed);
+      return;
+    }
+
+    if (isHealthAutoExport(parsed)) {
+      const imported = parseHealthAutoExport(parsed);
+      if (!imported.entries.length && !imported.workouts.length) {
+        alert("No recognizable metrics found in this Health Auto Export file.");
+        return;
+      }
+      setData(d => {
+        const merged = mergeImported(d, imported);
+        persist(merged);
+        return merged;
+      });
+      alert(`Imported from Health Auto Export: ${imported.entries.length} day(s) of metrics, ${imported.workouts.length} workout(s).`);
+      return;
+    }
+
+    alert("Unrecognized JSON file — expected a Recovery Log backup or a Health Auto Export file.");
+  }
+
   function importJSON(e) {
     const file = e.target.files[0];
     if (!file) return;
-    const reader = new FileReader();
-    reader.onload = ev => {
-      try {
-        const parsed = JSON.parse(ev.target.result);
-        if (parsed.entries && parsed.workouts) { setData(parsed); persist(parsed); }
-      } catch { alert("Invalid JSON file"); }
-    };
-    reader.readAsText(file);
+
+    if (/\.zip$/i.test(file.name)) {
+      file.arrayBuffer()
+        .then(extractJsonFromZip)
+        .then(applyImportedJSON)
+        .catch(err => alert(`Couldn't read zip file: ${err.message}`));
+    } else {
+      const reader = new FileReader();
+      reader.onload = ev => applyImportedJSON(ev.target.result);
+      reader.readAsText(file);
+    }
+    e.target.value = "";
   }
 
   if (!data) {
@@ -273,7 +488,7 @@ export default function RecoveryView() {
           <Btn onClick={exportJSON} variant="secondary" small>Export</Btn>
           <label style={{ cursor: "pointer" }}>
             <Btn variant="secondary" small onClick={() => {}}>Import</Btn>
-            <input type="file" accept=".json" onChange={importJSON} style={{ display: "none" }} />
+            <input type="file" accept=".json,.zip" onChange={importJSON} style={{ display: "none" }} />
           </label>
         </div>
       </div>
