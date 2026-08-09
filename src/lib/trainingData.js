@@ -4,6 +4,10 @@ export const DEFAULT_LOGS = {
   weightLogs: [],
   bodyLogs: [],
   maxHRTest: null,
+  customExercises: [],  // user-typed exercises not in the built-in library: {id, name, muscle, icon, sets, reps}
+  sessionOverrides: {}, // permanent per-session-type edits, keyed by sessionKey (e.g. "A-base"):
+                         // { replacements: {oldExerciseId: exercise}, added: [exercise], removedIds: [exerciseId] }
+  dayOverrides: {},     // one-off edits for a single session date, keyed by date (YYYY-MM-DD), same shape as above
 };
 
 export async function loadTrainingLogs() {

@@ -1,5 +1,6 @@
 import { useState, useMemo, useEffect } from "react";
 import { loadTrainingLogs, saveTrainingLogs, DEFAULT_LOGS } from "../lib/trainingData.js";
+import { EXERCISE_LIBRARY, searchExercises } from "../lib/exerciseLibrary.js";
 import { INK, SURFACE, SURFACE2, BORDER, PAPER, MUTE, GREEN, AMBER, RED, BLUE, DISPLAY, MONO, BODY } from "../lib/theme.js";
 
 // ── Plan data ─────────────────────────────────────────────────────────────
@@ -194,6 +195,14 @@ const plan = {
   ],
 };
 
+// Week 1 starts Monday 1 Jun 2026 — derived from the race day (Week 15's Sunday, 13 Sep 2026).
+const WEEK1_MONDAY = new Date("2026-06-01T00:00:00");
+function getCurrentWeekIndex() {
+  const daysSince = Math.floor((new Date() - WEEK1_MONDAY) / 86400000);
+  const idx = Math.floor(daysSince / 7);
+  return Math.max(0, Math.min(plan.weeks.length - 1, idx));
+}
+
 // ── View-specific color maps (uses shared theme tokens from import) ───────
 const typeColor = {
   gym:  { bg: "#171a2e", border: BLUE, text: "#a8b3f0", dot: BLUE },
@@ -205,7 +214,39 @@ const muscleColor = {
   "Legs": "#B48CE0", "Posterior chain": "#E8873D", "Chest / Shoulders": BLUE,
   "Shoulders": "#4DBFC4", "Back": "#D9739F", "Back / Lats": "#D9739F",
   "Core": MUTE, "Legs / Glutes": "#B48CE0", "Chest": BLUE,
+  "Glutes": "#EC7FAE", "Arms": "#60A5FA", "Full Body": "#E8A83D",
 };
+const MUSCLE_GROUPS = ["Legs", "Posterior chain", "Chest", "Chest / Shoulders", "Back", "Back / Lats", "Shoulders", "Core", "Glutes", "Legs / Glutes", "Arms", "Full Body"];
+
+// ── Exercise overrides ───────────────────────────────────────────────────
+// Resolves the effective exercise list for one session instance by layering
+// permanent per-session-type overrides first, then one-off overrides scoped
+// to this exact date on top — so a same-day edit can even override a
+// standing permanent swap. Each resolved exercise is tagged with where it
+// came from (_source/_replacedId) so the UI can show a badge + one-click undo.
+function resolveExercises(baseExercises, sessionKey, date, sessionOverrides, dayOverrides) {
+  let list = baseExercises.map(e => ({ ...e, _source: "base" }));
+
+  function apply(ov, scope) {
+    if (!ov) return;
+    if (ov.removedIds?.length) list = list.filter(e => !ov.removedIds.includes(e.id));
+    if (ov.replacements) {
+      list = list.map(e => {
+        const repl = ov.replacements[e.id];
+        return repl ? { ...repl, _source: `replaced-${scope}`, _replacedId: e.id, _replacedName: e.name } : e;
+      });
+    }
+    if (ov.added?.length) list = [...list, ...ov.added.map(e => ({ ...e, _source: `added-${scope}` }))];
+  }
+  apply(sessionOverrides[sessionKey], "permanent");
+  apply(dayOverrides[date], "day");
+  return list;
+}
+
+function makeCustomExerciseId(name) {
+  const slug = name.trim().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "");
+  return `custom-${slug || "exercise"}-${Date.now().toString(36)}`;
+}
 
 // ── Components ────────────────────────────────────────────────────────────
 function Btn({ children, onClick, variant = "primary", small, full }) {
@@ -234,14 +275,115 @@ function InputField({ label, value, onChange, type = "number", placeholder, unit
   );
 }
 
+// Modal: search the built-in library / custom exercises, or define a new one,
+// then choose whether the change applies just to this date or every time this
+// session type comes up. Used both for "+ Add exercise" (mode="add", no
+// target) and per-row "⇄ Replace" (mode="replace", target = exercise being swapped).
+function ExercisePicker({ mode, target, customExercises, onCreateCustom, onConfirm, onRemove, onClose }) {
+  const [query, setQuery] = useState("");
+  const [selected, setSelected] = useState(null); // exercise object, or {_remove:true}
+  const [customName, setCustomName] = useState("");
+  const [customMuscle, setCustomMuscle] = useState(MUSCLE_GROUPS[0]);
+
+  const results = useMemo(() => searchExercises(query, customExercises), [query, customExercises]);
+
+  function createCustom() {
+    if (!customName.trim()) return;
+    const ex = { id: makeCustomExerciseId(customName), name: customName.trim(), muscle: customMuscle, icon: "🏋️", sets: 3, reps: "10" };
+    onCreateCustom(ex);
+    setSelected(ex);
+  }
+
+  return (
+    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.75)", display: "flex", alignItems: "flex-end", justifyContent: "center", zIndex: 300 }}
+      onClick={e => e.target === e.currentTarget && onClose()}>
+      <div style={{ background: "#151a16", border: `1px solid ${BORDER}`, borderRadius: "16px 16px 0 0", padding: 20, width: "100%", maxWidth: 600, maxHeight: "85vh", overflowY: "auto", animation: "up 0.2s ease" }}>
+
+        {!selected ? (
+          <>
+            <div style={{ fontSize: 16, fontWeight: 800, marginBottom: 4 }}>
+              {mode === "replace" ? `Replace ${target.name}` : "Add an exercise"}
+            </div>
+            <div style={{ fontSize: 11, color: MUTE, marginBottom: 14 }}>
+              {mode === "replace" ? "Pick a substitute, or remove it without replacing." : "Search the exercise library, or add your own."}
+            </div>
+            <InputField label="Search" value={query} onChange={setQuery} type="text" placeholder="e.g. lunge, shoulders…" />
+
+            <div style={{ marginTop: 12, maxHeight: 260, overflowY: "auto", border: `1px solid ${BORDER}`, borderRadius: 3 }}>
+              {results.length === 0 ? (
+                <div style={{ padding: 14, fontSize: 12, color: MUTE, textAlign: "center" }}>No matches — add it as a custom exercise below.</div>
+              ) : results.map(ex => {
+                const mc = muscleColor[ex.muscle] || "#8A8578";
+                return (
+                  <div key={ex.id} onClick={() => setSelected(ex)}
+                    style={{ display: "flex", alignItems: "center", gap: 10, padding: "9px 12px", borderBottom: `1px solid ${BORDER}`, cursor: "pointer" }}>
+                    <span style={{ fontSize: 15 }}>{ex.icon}</span>
+                    <span style={{ flex: 1, fontSize: 13, color: "#EDEAE2" }}>{ex.name}</span>
+                    <span style={{ fontSize: 9, background: `${mc}22`, color: mc, padding: "2px 7px", borderRadius: 3, fontFamily: MONO, whiteSpace: "nowrap" }}>{ex.muscle}</span>
+                  </div>
+                );
+              })}
+            </div>
+
+            <div style={{ marginTop: 16, paddingTop: 14, borderTop: `1px solid ${BORDER}` }}>
+              <div style={{ fontSize: 10, color: MUTE, fontFamily: MONO, textTransform: "uppercase", letterSpacing: 1, marginBottom: 8 }}>Can't find it? Add your own</div>
+              <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
+                <div style={{ flex: 1 }}>
+                  <InputField label="Name" value={customName} onChange={setCustomName} type="text" placeholder="e.g. Trap Bar Deadlift" />
+                </div>
+                <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                  <label style={{ fontSize: 9, color: MUTE, fontFamily: MONO, textTransform: "uppercase", letterSpacing: 1 }}>Muscle</label>
+                  <select value={customMuscle} onChange={e => setCustomMuscle(e.target.value)}
+                    style={{ background: INK, border: `1px solid ${BORDER}`, borderRadius: 3, padding: "7px 9px", color: PAPER, fontSize: 13, fontFamily: MONO }}>
+                    {MUSCLE_GROUPS.map(m => <option key={m} value={m}>{m}</option>)}
+                  </select>
+                </div>
+              </div>
+              <Btn onClick={createCustom} variant="secondary" small>+ Add custom exercise</Btn>
+            </div>
+
+            {mode === "replace" && (
+              <div style={{ marginTop: 16, paddingTop: 14, borderTop: `1px solid ${BORDER}` }}>
+                <Btn onClick={() => setSelected({ _remove: true })} variant="danger" small full>🗑 Remove without replacement</Btn>
+              </div>
+            )}
+
+            <div style={{ marginTop: 14 }}>
+              <Btn onClick={onClose} variant="secondary" small full>Cancel</Btn>
+            </div>
+          </>
+        ) : (
+          <>
+            <div style={{ fontSize: 16, fontWeight: 800, marginBottom: 4 }}>
+              {selected._remove ? `Remove ${target.name}` : mode === "replace" ? `Replace with ${selected.name}` : `Add ${selected.name}`}
+            </div>
+            <div style={{ fontSize: 11, color: MUTE, marginBottom: 16 }}>How long should this change apply?</div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+              <Btn onClick={() => (selected._remove ? onRemove("day") : onConfirm(selected, "day"))} variant="success" full>Just this session (today)</Btn>
+              <Btn onClick={() => (selected._remove ? onRemove("permanent") : onConfirm(selected, "permanent"))} variant="primary" full>Every time — permanent</Btn>
+              <Btn onClick={() => setSelected(null)} variant="secondary" small full>← Back</Btn>
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // Weight log panel for a single exercise
-function ExerciseRow({ ex, weekNum, sessionDate, logs, onLog }) {
+function ExerciseRow({ ex, weekNum, sessionDate, logs, onLog, onReplace, onUndo }) {
   const [open, setOpen] = useState(false);
   const [logOpen, setLogOpen] = useState(false);
   const [weight, setWeight] = useState("");
   const [reps, setReps] = useState("");
   const [sets, setSets] = useState("");
   const mc = muscleColor[ex.muscle] || "#8A8578";
+  const isOverride = ex._source && ex._source !== "base";
+  const isDayScoped = ex._source?.endsWith("-day");
+  const badgeLabel = ex._source === "replaced-day" ? `swapped in for ${ex._replacedName} · today`
+    : ex._source === "replaced-permanent" ? `swapped in for ${ex._replacedName}`
+    : ex._source === "added-day" ? "added · today"
+    : ex._source === "added-permanent" ? "added" : null;
 
   // History for this exercise
   const history = useMemo(() =>
@@ -273,10 +415,18 @@ function ExerciseRow({ ex, weekNum, sessionDate, logs, onLog }) {
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ fontSize: 13, fontWeight: 700, color: "#EDEAE2" }}>{ex.name}</div>
           <div style={{ fontSize: 11, color: "#8A8578" }}>{ex.sets}×{ex.reps}{lastEntry ? ` · last: ${lastEntry.weight_kg ? lastEntry.weight_kg + "kg" : "BW"} ×${lastEntry.reps}` : ""}</div>
+          {badgeLabel && (
+            <div style={{ fontSize: 9, color: isDayScoped ? AMBER : BLUE, fontFamily: MONO, marginTop: 2 }}>↺ {badgeLabel}</div>
+          )}
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
           <span style={{ fontSize: 9, background: `${mc}22`, color: mc, padding: "2px 7px", borderRadius: 3, fontFamily: "'IBM Plex Mono',monospace", whiteSpace: "nowrap" }}>{ex.muscle}</span>
           <button onClick={e => { e.stopPropagation(); setLogOpen(l => !l); }} style={{ background: GREEN, border: "none", borderRadius: 3, color: "#fff", fontSize: 11, fontWeight: 700, padding: "4px 8px", cursor: "pointer", flexShrink: 0 }}>+ Log</button>
+          {isOverride ? (
+            <button onClick={e => { e.stopPropagation(); onUndo(); }} title="Undo" style={{ background: "transparent", border: `1px solid ${BORDER}`, borderRadius: 3, color: "#8A8578", fontSize: 11, padding: "4px 7px", cursor: "pointer", flexShrink: 0 }}>↺</button>
+          ) : (
+            <button onClick={e => { e.stopPropagation(); onReplace(); }} title="Replace" style={{ background: "transparent", border: `1px solid ${BORDER}`, borderRadius: 3, color: "#8A8578", fontSize: 11, padding: "4px 7px", cursor: "pointer", flexShrink: 0 }}>⇄</button>
+          )}
           <span style={{ fontSize: 12, color: "#8A8578", transform: open ? "rotate(180deg)" : "none", transition: "transform 0.2s" }}>▾</span>
         </div>
       </div>
@@ -284,7 +434,7 @@ function ExerciseRow({ ex, weekNum, sessionDate, logs, onLog }) {
       {/* Coaching note */}
       {open && (
         <div style={{ background: "#151a16", borderRadius: 3, padding: "10px 12px", marginBottom: 8, fontSize: 12, color: "#A8A398", lineHeight: 1.6 }}>
-          <strong style={{ color: "#EDEAE2" }}>Note:</strong> {ex.note}
+          {ex.note && <><strong style={{ color: "#EDEAE2" }}>Note:</strong> {ex.note}</>}
           {history.length > 0 && (
             <div style={{ marginTop: 10 }}>
               <div style={{ fontSize: 9, color: "#8A8578", fontFamily: "'IBM Plex Mono',monospace", textTransform: "uppercase", letterSpacing: 1, marginBottom: 6 }}>Recent sets</div>
@@ -318,9 +468,21 @@ function ExerciseRow({ ex, weekNum, sessionDate, logs, onLog }) {
   );
 }
 
-function GymSession({ sessionKey, weekNum, sessionDate, logs, onLog }) {
+function GymSession({ sessionKey, weekNum, sessionDate, logs, onLog, customExercises, sessionOverrides, dayOverrides, onAddExercise, onUndoAddExercise, onReplaceExercise, onUndoReplace, onRemoveExercise, onCreateCustomExercise }) {
+  const [picker, setPicker] = useState(null); // { mode: "add"|"replace", target?: exercise }
   const s = gymSessions[sessionKey];
   if (!s) return <div style={{ color: "#8A8578", fontSize: 13 }}>Session details not found.</div>;
+
+  const exercises = resolveExercises(s.exercises, sessionKey, sessionDate, sessionOverrides, dayOverrides);
+
+  // Rows only ever offer "undo" once they're already an override (base rows offer
+  // "replace" instead), so this always targets a replaced-* or added-* exercise.
+  function undo(ex) {
+    const scope = ex._source.endsWith("-day") ? "day" : "permanent";
+    if (ex._source.startsWith("replaced")) onUndoReplace(scope, ex._replacedId);
+    else onUndoAddExercise(scope, ex.id);
+  }
+
   return (
     <div>
       <div style={{ marginBottom: 12 }}>
@@ -333,9 +495,14 @@ function GymSession({ sessionKey, weekNum, sessionDate, logs, onLog }) {
       </div>
       <div style={{ fontSize: 9, color: "#8A8578", fontFamily: "'IBM Plex Mono',monospace", textTransform: "uppercase", letterSpacing: 1, marginBottom: 4 }}>Exercises</div>
       <div style={{ background: "#131c2e", border: "1px solid #252b25", borderRadius: 3, padding: "0 12px" }}>
-        {s.exercises.map((ex, i) => (
-          <ExerciseRow key={i} ex={ex} weekNum={weekNum} sessionDate={sessionDate} logs={logs} onLog={onLog} />
+        {exercises.map((ex, i) => (
+          <ExerciseRow key={ex.id + "-" + i} ex={ex} weekNum={weekNum} sessionDate={sessionDate} logs={logs} onLog={onLog}
+            onReplace={() => setPicker({ mode: "replace", target: ex })}
+            onUndo={() => undo(ex)} />
         ))}
+      </div>
+      <div style={{ marginTop: 10 }}>
+        <Btn onClick={() => setPicker({ mode: "add" })} variant="secondary" small>+ Add exercise</Btn>
       </div>
       <div style={{ background: "#151a16", borderRadius: 3, padding: "8px 12px", marginTop: 10, fontSize: 12, color: "#a78bfa" }}>
         <strong>Cool-down:</strong> {s.cooldown}
@@ -343,6 +510,22 @@ function GymSession({ sessionKey, weekNum, sessionDate, logs, onLog }) {
       <div style={{ background: "#064e3b", borderRadius: 3, padding: "8px 12px", marginTop: 6, fontSize: 12, color: "#6ee7b7" }}>
         <strong>Progression:</strong> {s.progression}
       </div>
+
+      {picker && (
+        <ExercisePicker
+          mode={picker.mode}
+          target={picker.target}
+          customExercises={customExercises}
+          onCreateCustom={onCreateCustomExercise}
+          onClose={() => setPicker(null)}
+          onConfirm={(exercise, scope) => {
+            if (picker.mode === "replace") onReplaceExercise(scope, picker.target.id, exercise);
+            else onAddExercise(scope, exercise);
+            setPicker(null);
+          }}
+          onRemove={(scope) => { onRemoveExercise(scope, picker.target.id); setPicker(null); }}
+        />
+      )}
     </div>
   );
 }
@@ -701,7 +884,7 @@ export default function PlanView() {
   const [logs, setLogs] = useState(null);
   const [loadError, setLoadError] = useState(false);
   const [saveStatus, setSaveStatus] = useState("idle"); // idle | saving | saved | error
-  const [selectedWeek, setSelectedWeek] = useState(0);
+  const [selectedWeek, setSelectedWeek] = useState(getCurrentWeekIndex);
   const [selectedDay, setSelectedDay] = useState(null);
   const [tab, setTab] = useState("plan");
   const [sessionDate, setSessionDate] = useState(new Date().toISOString().slice(0, 10));
@@ -746,6 +929,55 @@ export default function PlanView() {
       persist(updated);
       return updated;
     });
+  }
+
+  function addCustomExercise(ex) {
+    setLogs(l => {
+      const updated = { ...l, customExercises: [...l.customExercises, ex] };
+      persist(updated);
+      return updated;
+    });
+  }
+
+  // scope "day" edits apply to one session date only; "permanent" edits apply to
+  // every future occurrence of that session type (e.g. every "A-base" session).
+  function mutateOverrides(scope, sessionKey, sessionDate, mutateFn) {
+    const bucket = scope === "day" ? "dayOverrides" : "sessionOverrides";
+    const scopeKey = scope === "day" ? sessionDate : sessionKey;
+    setLogs(l => {
+      const current = l[bucket][scopeKey] || {};
+      const next = mutateFn({
+        replacements: { ...(current.replacements || {}) },
+        added: [...(current.added || [])],
+        removedIds: [...(current.removedIds || [])],
+      });
+      const updated = { ...l, [bucket]: { ...l[bucket], [scopeKey]: next } };
+      persist(updated);
+      return updated;
+    });
+  }
+
+  function addExerciseToSession(scope, sessionKey, sessionDate, exercise) {
+    mutateOverrides(scope, sessionKey, sessionDate, cur => ({ ...cur, added: [...cur.added, exercise] }));
+  }
+
+  function undoAddExercise(scope, sessionKey, sessionDate, exerciseId) {
+    mutateOverrides(scope, sessionKey, sessionDate, cur => ({ ...cur, added: cur.added.filter(e => e.id !== exerciseId) }));
+  }
+
+  function replaceExercise(scope, sessionKey, sessionDate, oldId, newExercise) {
+    mutateOverrides(scope, sessionKey, sessionDate, cur => ({ ...cur, replacements: { ...cur.replacements, [oldId]: newExercise } }));
+  }
+
+  function undoReplace(scope, sessionKey, sessionDate, replacedId) {
+    mutateOverrides(scope, sessionKey, sessionDate, cur => {
+      const { [replacedId]: _omit, ...rest } = cur.replacements;
+      return { ...cur, replacements: rest };
+    });
+  }
+
+  function removeExercise(scope, sessionKey, sessionDate, exerciseId) {
+    mutateOverrides(scope, sessionKey, sessionDate, cur => ({ ...cur, removedIds: [...cur.removedIds, exerciseId] }));
   }
 
   function exportData() {
@@ -850,7 +1082,7 @@ export default function PlanView() {
             <div style={{ background: "#151a16", border: "1px solid #252b25", borderRadius: 3, padding: "12px 16px", marginBottom: 14, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
               <div>
                 <div style={{ fontSize: 9, color: "#8A8578", fontFamily: "'IBM Plex Mono',monospace", textTransform: "uppercase", letterSpacing: 1 }}>
-                  {selectedWeek === 3 ? "DELOAD WEEK" : selectedWeek === 7 ? "MILESTONE WEEK" : `Week ${week.week} of 8`}
+                  {selectedWeek === 3 ? "DELOAD WEEK" : selectedWeek === 7 ? "MILESTONE WEEK" : `Week ${week.week} of ${plan.weeks.length}`}
                 </div>
                 <div style={{ fontSize: 16, fontWeight: 700, marginTop: 2 }}>{week.focus}</div>
               </div>
@@ -892,7 +1124,19 @@ export default function PlanView() {
                 </div>
 
                 {selectedDay.type === "gym" && gymKey ? (
-                  <GymSession sessionKey={gymKey} weekNum={week.week} sessionDate={sessionDate} logs={logs.weightLogs} onLog={addWeightLog} />
+                  <GymSession
+                    sessionKey={gymKey} weekNum={week.week} sessionDate={sessionDate}
+                    logs={logs.weightLogs} onLog={addWeightLog}
+                    customExercises={logs.customExercises}
+                    sessionOverrides={logs.sessionOverrides}
+                    dayOverrides={logs.dayOverrides}
+                    onCreateCustomExercise={addCustomExercise}
+                    onAddExercise={(scope, ex) => addExerciseToSession(scope, gymKey, sessionDate, ex)}
+                    onUndoAddExercise={(scope, id) => undoAddExercise(scope, gymKey, sessionDate, id)}
+                    onReplaceExercise={(scope, oldId, newEx) => replaceExercise(scope, gymKey, sessionDate, oldId, newEx)}
+                    onUndoReplace={(scope, replacedId) => undoReplace(scope, gymKey, sessionDate, replacedId)}
+                    onRemoveExercise={(scope, id) => removeExercise(scope, gymKey, sessionDate, id)}
+                  />
                 ) : (
                   <div style={{ fontSize: 14, color: "#A8A398", lineHeight: 1.7 }}>{selectedDay.detail || "Rest day."}</div>
                 )}
