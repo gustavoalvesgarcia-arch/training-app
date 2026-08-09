@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect } from "react";
+import { useState, useMemo, useEffect, useRef } from "react";
 import { loadRecoveryData, saveRecoveryData } from "../lib/recoveryData.js";
 import { computeScore } from "../lib/scoring.js";
 import { INK, PAPER, GREEN, AMBER, RED, MONO, DISPLAY, BODY } from "../lib/theme.js";
@@ -244,6 +244,9 @@ async function extractJsonFromZip(arrayBuffer) {
   const { bytes: entryBytes, compressionMethod } = readZipJsonEntry(bytes, view);
   if (compressionMethod === 0) return new TextDecoder().decode(entryBytes);
   if (compressionMethod === 8) {
+    if (typeof DecompressionStream === "undefined") {
+      throw new Error("This browser can't decompress zip files (needs a newer iOS/Safari version) — unzip and select the .json file directly instead.");
+    }
     const stream = new Blob([entryBytes]).stream().pipeThrough(new DecompressionStream("deflate-raw"));
     return await new Response(stream).text();
   }
@@ -285,6 +288,7 @@ export default function RecoveryView() {
   const [modal, setModal] = useState(null); // "metrics" | "workout"
   const [selected, setSelected] = useState(null);
   const [selectedWk, setSelectedWk] = useState(null);
+  const importInputRef = useRef(null);
 
   // Form state — metrics
   const [form, setForm] = useState({ date: new Date().toISOString().slice(0, 10), rhr: "", hrv: "", sleep: "", deep: "", rem: "", spo2: "", vo2max: "", notes: "" });
@@ -486,10 +490,8 @@ export default function RecoveryView() {
         ))}
         <div style={{ marginLeft: "auto", display: "flex", gap: 6, alignItems: "center", flexShrink: 0, paddingLeft: 12 }}>
           <Btn onClick={exportJSON} variant="secondary" small>Export</Btn>
-          <label style={{ cursor: "pointer" }}>
-            <Btn variant="secondary" small onClick={() => {}}>Import</Btn>
-            <input type="file" accept=".json,.zip" onChange={importJSON} style={{ display: "none" }} />
-          </label>
+          <Btn onClick={() => importInputRef.current?.click()} variant="secondary" small>Import</Btn>
+          <input ref={importInputRef} type="file" accept=".json,.zip" onChange={importJSON} style={{ display: "none" }} />
         </div>
       </div>
 
