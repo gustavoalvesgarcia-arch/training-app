@@ -14,6 +14,17 @@ const LOCKOUT_KEY = "applock_pin_lockout_until";
 const MAX_ATTEMPTS = 5;
 const LOCKOUT_MS = 30_000;
 
+export function describeWebAuthnError(err) {
+  const name = err?.name || "";
+  if (name === "NotAllowedError") return "Face ID / Touch ID was cancelled, denied, or timed out.";
+  if (name === "SecurityError") return "This page's address doesn't match what the credential expects — try closing and reopening the app.";
+  if (name === "InvalidStateError") return "A credential already exists for this device.";
+  if (name === "NotSupportedError") return "This browser/device doesn't support the requested authenticator type.";
+  if (name === "AbortError") return "The request was aborted.";
+  if (name === "ConstraintError") return "Face ID / Touch ID isn't available to the browser on this device.";
+  return err?.message || "Something went wrong with Face ID / Touch ID.";
+}
+
 export function hasCredential() {
   return !!localStorage.getItem(CREDENTIAL_KEY);
 }
@@ -43,13 +54,14 @@ function base64ToBuf(b64) {
 }
 
 export async function registerBiometric() {
+  if (!window.PublicKeyCredential) throw new Error("WebAuthn isn't supported in this browser.");
   const credential = await navigator.credentials.create({
     publicKey: {
       challenge: randomBytes(32),
-      rp: { name: "Recovery Log" },
+      rp: { name: "Recovery Log", id: window.location.hostname },
       user: { id: randomBytes(16), name: "gustavo", displayName: "Gustavo" },
       pubKeyCredParams: [{ type: "public-key", alg: -7 }, { type: "public-key", alg: -257 }],
-      authenticatorSelection: { authenticatorAttachment: "platform", userVerification: "required" },
+      authenticatorSelection: { authenticatorAttachment: "platform", userVerification: "required", residentKey: "preferred" },
       timeout: 60000,
       attestation: "none",
     },
@@ -64,6 +76,7 @@ export async function verifyBiometric() {
   const assertion = await navigator.credentials.get({
     publicKey: {
       challenge: randomBytes(32),
+      rpId: window.location.hostname,
       allowCredentials: [{ id: base64ToBuf(storedId), type: "public-key", transports: ["internal"] }],
       userVerification: "required",
       timeout: 60000,

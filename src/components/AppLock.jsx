@@ -68,7 +68,7 @@ export default function AppLock({ children }) {
   async function tryBiometric() {
     setError("");
     try { await lock.verifyBiometric(); setPhase("unlocked"); }
-    catch { setError("Face ID / Touch ID failed or was cancelled."); }
+    catch (err) { setError(lock.describeWebAuthnError(err)); }
   }
 
   // Auto-prompt once when the lock screen first appears — saves a tap on the
@@ -83,7 +83,7 @@ export default function AppLock({ children }) {
   async function registerBio() {
     setError("");
     try { await lock.registerBiometric(); setPhase("setup-pin"); }
-    catch { setError("Couldn't set up Face ID / Touch ID on this device — you can still set a PIN."); setPhase("setup-pin"); }
+    catch (err) { setError(lock.describeWebAuthnError(err)); } // stay on setup-bio — a failure here must not look like success
   }
 
   async function submitPinSetup() {
