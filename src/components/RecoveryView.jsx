@@ -399,12 +399,15 @@ export default function RecoveryView() {
         alert("No recognizable metrics found in this Health Auto Export file.");
         return;
       }
-      setData(d => {
-        const merged = mergeImported(d, imported);
+      // Merge onto the latest server data, not whatever's sitting in this tab's memory —
+      // a tab left open across a change made elsewhere (another device, a manual fix)
+      // must not silently resurrect data that no longer exists on the server.
+      loadRecoveryData().then(latest => {
+        const merged = mergeImported(latest, imported);
+        setData(merged);
         persist(merged);
-        return merged;
-      });
-      alert(`Imported from Health Auto Export: ${imported.entries.length} day(s) of metrics, ${imported.workouts.length} workout(s).`);
+        alert(`Imported from Health Auto Export: ${imported.entries.length} day(s) of metrics, ${imported.workouts.length} workout(s).`);
+      }).catch(() => alert("Couldn't reach the server to import — check your connection and try again."));
       return;
     }
 
