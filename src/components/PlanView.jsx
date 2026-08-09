@@ -1,6 +1,7 @@
-import { useState, useMemo, useEffect } from "react";
+import { useState, useMemo, useEffect, useRef } from "react";
 import { loadTrainingLogs, saveTrainingLogs, DEFAULT_LOGS } from "../lib/trainingData.js";
 import { EXERCISE_LIBRARY, searchExercises } from "../lib/exerciseLibrary.js";
+import { isGoodvibesCsv, parseGoodvibesCsv, mergeGoodvibesEntries } from "../lib/goodvibesImport.js";
 import { INK, SURFACE, SURFACE2, BORDER, PAPER, MUTE, GREEN, AMBER, RED, BLUE, DISPLAY, MONO, BODY } from "../lib/theme.js";
 
 // ── Plan data ─────────────────────────────────────────────────────────────
@@ -900,6 +901,7 @@ export default function PlanView() {
   const [selectedDay, setSelectedDay] = useState(null);
   const [tab, setTab] = useState("plan");
   const [sessionDate, setSessionDate] = useState(new Date().toISOString().slice(0, 10));
+  const importInputRef = useRef(null);
 
   useEffect(() => {
     loadTrainingLogs().then(l => setLogs(l)).catch(() => { setLogs(DEFAULT_LOGS); setLoadError(true); });
@@ -1005,12 +1007,29 @@ export default function PlanView() {
     if (!file) return;
     const reader = new FileReader();
     reader.onload = ev => {
+      const text = ev.target.result;
+
+      if (isGoodvibesCsv(text)) {
+        const imported = parseGoodvibesCsv(text);
+        if (!imported.length) { alert("Couldn't find any readings in this Goodvibes CSV."); return; }
+        setLogs(l => {
+          const { bodyLogs, addedCount, skippedCount } = mergeGoodvibesEntries(l.bodyLogs, imported);
+          const updated = { ...l, bodyLogs };
+          persist(updated);
+          alert(`Imported ${addedCount} reading(s) from Goodvibes${skippedCount ? ` (${skippedCount} already logged, skipped)` : ""}.`);
+          return updated;
+        });
+        return;
+      }
+
       try {
-        const parsed = JSON.parse(ev.target.result);
+        const parsed = JSON.parse(text);
         if (parsed.weightLogs && parsed.bodyLogs) { setLogs(parsed); persist(parsed); }
+        else { alert("Unrecognized file — expected a Training Log backup or a Goodvibes CSV export."); }
       } catch { alert("Invalid file"); }
     };
     reader.readAsText(file);
+    e.target.value = "";
   }
 
   if (!logs) {
@@ -1055,10 +1074,8 @@ export default function PlanView() {
         </div>
         <div style={{ display: "flex", gap: 8 }}>
           <Btn onClick={exportData} variant="secondary" small>Export</Btn>
-          <label style={{ cursor: "pointer" }}>
-            <Btn variant="secondary" small onClick={() => {}}>Import</Btn>
-            <input type="file" accept=".json" onChange={importData} style={{ display: "none" }} />
-          </label>
+          <Btn onClick={() => importInputRef.current?.click()} variant="secondary" small>Import</Btn>
+          <input ref={importInputRef} type="file" accept=".json,.csv" onChange={importData} style={{ display: "none" }} />
         </div>
       </div>
       <div style={{ fontSize: 9, color: "#8A8578", textAlign: "center", padding: "4px 0", background: "#0C0F14" }}>
