@@ -265,11 +265,11 @@ export default function RecoveryView() {
       </div>
 
       {/* Tabs */}
-      <div style={{ display: "flex", gap: 0, background: "#0F1310", borderBottom: "1px solid #252b25", padding: "0 20px" }}>
+      <div style={{ display: "flex", gap: 0, background: "#0F1310", borderBottom: "1px solid #252b25", padding: "0 20px", overflowX: "auto", WebkitOverflowScrolling: "touch" }}>
         {[["today", "Today"], ["history", "History"], ["workouts", "Workouts"], ["efficiency", "Efficiency"], ["trends", "Trends"]].map(([v, l]) => (
-          <button key={v} onClick={() => setTab(v)} style={{ padding: "12px 16px", border: "none", background: "transparent", color: tab === v ? GREEN : "#8A8578", fontFamily: DISPLAY, fontWeight: 700, fontSize: 13, cursor: "pointer", borderBottom: tab === v ? `2px solid ${GREEN}` : "2px solid transparent", transition: "all 0.15s" }}>{l}</button>
+          <button key={v} onClick={() => setTab(v)} style={{ padding: "12px 16px", border: "none", background: "transparent", color: tab === v ? GREEN : "#8A8578", fontFamily: DISPLAY, fontWeight: 700, fontSize: 13, cursor: "pointer", borderBottom: tab === v ? `2px solid ${GREEN}` : "2px solid transparent", transition: "all 0.15s", whiteSpace: "nowrap", flexShrink: 0 }}>{l}</button>
         ))}
-        <div style={{ marginLeft: "auto", display: "flex", gap: 6, alignItems: "center" }}>
+        <div style={{ marginLeft: "auto", display: "flex", gap: 6, alignItems: "center", flexShrink: 0, paddingLeft: 12 }}>
           <Btn onClick={exportJSON} variant="secondary" small>Export</Btn>
           <label style={{ cursor: "pointer" }}>
             <Btn variant="secondary" small onClick={() => {}}>Import</Btn>
