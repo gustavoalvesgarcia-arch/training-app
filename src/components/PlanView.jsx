@@ -7,9 +7,10 @@ import { INK, SURFACE, SURFACE2, BORDER, PAPER, MUTE, GREEN, AMBER, RED, BLUE, D
 // ── Plan data ─────────────────────────────────────────────────────────────
 const gymSessions = {
   "A-base": {
-    label: "Gym A — Full Body", duration: "60–70 min",
+    label: "Gym A — Full Body", duration: "~60 min (incl. finisher)",
     focus: "Compound foundation. Squat pattern, push, pull, hinge.",
     warmup: "5 min row or bike + 2×10 bodyweight squat + arm circles",
+    tempo: "Straight sets, no supersets — keep rest to 60–75s between sets to stay on time.",
     exercises: [
       { id: "front-squat",     name: "Front Squat",             sets: 3, reps: "8",  muscle: "Legs",               icon: "🦵", note: "Swapped from Goblet Squat (29 Jun). Started at 40kg — adjust by feel, prioritise depth and bracing over load early on." },
       { id: "rdl",             name: "DB Romanian Deadlift",    sets: 3, reps: "10", muscle: "Posterior chain",     icon: "🔙", note: "Hip hinge, soft knees, flat back." },
@@ -18,13 +19,15 @@ const gymSessions = {
       { id: "ohp",             name: "Overhead Press (DB)",     sets: 3, reps: "10", muscle: "Shoulders",           icon: "⬆️", note: "Core braced. Don't flare ribs." },
       { id: "plank",           name: "Plank",                   sets: 3, reps: "30s", muscle: "Core",               icon: "⬛", note: "Rest 45s between. Quality over duration." },
     ],
+    finisher: "5 min, moderate-hard, continuous — whichever's free: kettlebell swings, rowing machine, incline treadmill walk, or stationary bike. Not a max-effort test, just steady work to close out the session.",
     cooldown: "5 min walk + hip flexor stretch + thoracic rotation",
     progression: "Add 2.5kg per movement when you complete all reps with clean form for 2 consecutive sessions.",
   },
   "B-base": {
-    label: "Gym B — Full Body (Variation)", duration: "60–70 min",
+    label: "Gym B — Full Body (Variation)", duration: "~60 min (incl. finisher)",
     focus: "Same patterns, different angles. Unilateral work.",
     warmup: "5 min walk + 2×10 hip circle + banded clamshell",
+    tempo: "Straight sets, no supersets — keep rest to 60–75s between sets to stay on time.",
     exercises: [
       { id: "bss",             name: "Bulgarian Split Squat",   sets: 3, reps: "8 each", muscle: "Legs / Glutes",   icon: "🦵", note: "Bodyweight or light DB. Back foot elevated." },
       { id: "sl-rdl",          name: "Single-Leg RDL",          sets: 3, reps: "8 each", muscle: "Posterior chain", icon: "🔙", note: "Light. Balance > load." },
@@ -33,6 +36,7 @@ const gymSessions = {
       { id: "lateral-raise",   name: "Lateral Raise",           sets: 3, reps: "12", muscle: "Shoulders",           icon: "↔️", note: "Light. Controlled lowering." },
       { id: "dead-bug",        name: "Dead Bug",                sets: 3, reps: "8 each", muscle: "Core",            icon: "⬛", note: "Slow. Lower back stays on floor." },
     ],
+    finisher: "5 min, moderate-hard, continuous — whichever's free: kettlebell swings, rowing machine, incline treadmill walk, or stationary bike. Not a max-effort test, just steady work to close out the session.",
     cooldown: "Pigeon stretch 60s each side + chest opener + hamstring stretch",
     progression: "If split squat feels unstable, regress to reverse lunge.",
   },
@@ -490,6 +494,7 @@ function GymSession({ sessionKey, weekNum, sessionDate, logs, onLog, customExerc
         <div style={{ fontSize: 9, color: GREEN, fontFamily: "'IBM Plex Mono',monospace", textTransform: "uppercase", letterSpacing: 1 }}>{s.duration}</div>
         <div style={{ fontSize: 16, fontWeight: 800, color: "#EDEAE2", marginTop: 2 }}>{s.label}</div>
         <div style={{ fontSize: 12, color: "#8A8578", marginTop: 3 }}>{s.focus}</div>
+        {s.tempo && <div style={{ fontSize: 11, color: "#6B7280", marginTop: 4, fontStyle: "italic" }}>{s.tempo}</div>}
       </div>
       <div style={{ background: "#151a16", borderRadius: 3, padding: "8px 12px", marginBottom: 12, fontSize: 12, color: "#818cf8" }}>
         <strong>Warm-up:</strong> {s.warmup}
@@ -505,6 +510,11 @@ function GymSession({ sessionKey, weekNum, sessionDate, logs, onLog, customExerc
       <div style={{ marginTop: 10 }}>
         <Btn onClick={() => setPicker({ mode: "add" })} variant="secondary" small>+ Add exercise</Btn>
       </div>
+      {s.finisher && (
+        <div style={{ background: "#2a1a0f", border: "1px solid #78350f", borderRadius: 3, padding: "8px 12px", marginTop: 10, fontSize: 12, color: "#fdba74" }}>
+          <strong>Finisher:</strong> {s.finisher}
+        </div>
+      )}
       <div style={{ background: "#151a16", borderRadius: 3, padding: "8px 12px", marginTop: 10, fontSize: 12, color: "#a78bfa" }}>
         <strong>Cool-down:</strong> {s.cooldown}
       </div>
